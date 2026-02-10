@@ -1,0 +1,117 @@
+---
+# Debian/Ubuntu System Setup
+
+- name: Update Apt Cache and Upgrade System
+  apt:
+    update_cache: true
+    upgrade: dist
+    cache_valid_time: 3600
+
+- name: Install needrestart (Debian/Ubuntu)
+  apt:
+    name: needrestart
+    state: present
+
+- name: Check if kernel reboot is required (needrestart)
+  command: needrestart -k -r l
+  register: needrestart_result
+  changed_when: false
+  failed_when: false
+
+- name: Reboot if required (needrestart)
+  reboot:
+    msg: "Rebooting to apply system updates"
+  when: "'HAS_NEWER_KERNEL' in needrestart_result.stdout or needrestart_result.rc == 2"
+
+- name: Install Essential Tools (Host)
+  apt:
+    name:
+      - git
+      - vim
+      - ufw
+      - fail2ban
+      - openssh-server
+      - sudo
+      - curl
+      - gnupg
+      - lsb-release
+      - python3-pip
+      - podman
+    state: present
+
+- name: Install Podman Compose (via PIP)
+  pip:
+    name: podman-compose
+    state: present
+    executable: pip3
+
+# Tailscale Installation
+- name: Add Tailscale GPG Key
+  shell: |
+    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/$(lsb_release -cs).noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  args:
+    creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Add Tailscale Repository (Ubuntu)
+  shell: |
+    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/$(lsb_release -cs).tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
+  args:
+    creates: /etc/apt/sources.list.d/tailscale.list
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  
+- name: Add Tailscale Repository (Debian)
+  shell: |
+     curl -fsSL https://pkgs.tailscale.com/stable/debian/$(lsb_release -cs).tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
+  args:
+     creates: /etc/apt/sources.list.d/tailscale.list
+  when: ansible_facts['distribution'] == 'Debian'
+
+- name: Update Apt Cache (Tailscale)
+  apt:
+    update_cache: true
+
+- name: Install Tailscale
+  apt:
+    name: tailscale
+    state: present
+
+# User Setup
+- name: Create OpenClaw User
+  user:
+    name: "{{ openclaw_user }}"
+    comment: "OpenClaw Service User"
+    shell: /bin/bash
+    create_home: true
+    home: "{{ openclaw_home }}"
+    state: present
+
+- name: Authorize New SSH Key for OpenClaw User
+  authorized_key:
+    user: "{{ openclaw_user }}"
+    state: present
+    key: "{{ deploy_public_key }}"
+
+- name: Setup OpenClaw .ssh Directory
+  file:
+    path: "{{ openclaw_home }}/.ssh"
+    state: directory
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0700'
+
+# Rootless Podman Setup
+- name: Enable Lingering for OpenClaw User
+  command: "loginctl enable-linger {{ openclaw_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ openclaw_user }}"
+
+- name: Start and Enable Tailscale
+  systemd:
+    name: tailscaled
+    state: started
+    enabled: true
+
+- name: Display Tailscale Instruction
+  debug:
+    msg: "Please run 'sudo tailscale up --ssh' manually to connect to your tailnet if not already connected."

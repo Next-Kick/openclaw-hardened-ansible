@@ -1,0 +1,14 @@
+FROM node:22-alpine
+
+# Install system dependencies (Git, CMake, and linux-headers are required for dependencies)
+RUN apk add --no-cache git python3 make g++ cmake linux-headers openssl
+
+# Install OpenClaw globally
+RUN npm install -g openclaw@latest
+
+# Run as non-root user (node:1000)
+USER 1000:1000
+WORKDIR /home/node
+
+# Default command (force bind to 0.0.0.0 for container networking)
+CMD ["openclaw", "gateway", "--allow-unconfigured", "--bind", "lan"]

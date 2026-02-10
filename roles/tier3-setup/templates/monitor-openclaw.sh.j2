@@ -1,0 +1,33 @@
+#!/bin/bash
+# OpenClaw Hardened Monitor
+# Automated security check script (Hardening Guide Step 18 & 23)
+
+REPORT_FILE="/home/openclaw/openclaw-docker/security-audit-$(date +%Y%m%d).log"
+echo "=== OpenClaw Security Audit $(date) ===" > "$REPORT_FILE"
+
+# 1. Run OpenClaw Internal Audit (Step 13)
+echo "[*] Running Internal Security Audit..." >> "$REPORT_FILE"
+podman exec openclaw-agent openclaw security audit --deep >> "$REPORT_FILE" 2>&1
+
+# 2. Check for Prompt Injection Patterns (Step 18)
+echo "[*] Scanning for Prompt Injection Attempts (Last 7 days)..." >> "$REPORT_FILE"
+find /home/openclaw/openclaw-docker/openclaw-data/agents -name "*.jsonl" -mtime -7 -exec 
+  grep -iH "IGNORE PREVIOUS\|SYSTEM:\|DISREGARD\|NEW INSTRUCTIONS" {} \; 
+  >> "$REPORT_FILE" 2>/dev/null
+
+# 3. Check for Dangerous Command Execution (Step 18)
+echo "[*] Scanning for Dangerous Command Patterns..." >> "$REPORT_FILE"
+find /home/openclaw/openclaw-docker/openclaw-data/agents -name "*.jsonl" -mtime -7 -exec 
+  grep -iH "rm -rf\|curl.*http\|wget\|nc \|bash -c\|/etc/passwd" {} \; 
+  >> "$REPORT_FILE" 2>/dev/null
+
+# 4. Scan Squid Logs for Denied Requests (Step 23)
+echo "[*] Scanning Proxy logs for blocked domains..." >> "$REPORT_FILE"
+podman logs openclaw-squid 2>&1 | grep "TCP_DENIED" | tail -n 20 >> "$REPORT_FILE"
+
+# 5. Verify Firewall Status
+echo "[*] Checking Firewall State..." >> "$REPORT_FILE"
+sudo ufw status verbose | grep "18789" >> "$REPORT_FILE"
+
+echo "=== Audit Complete ===" >> "$REPORT_FILE"
+echo "Report saved to: $REPORT_FILE"

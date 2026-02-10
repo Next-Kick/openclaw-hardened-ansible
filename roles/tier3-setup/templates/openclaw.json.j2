@@ -1,0 +1,77 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 18789,
+    "trustedProxies": [
+      "127.0.0.1",
+      "::1",
+      "172.16.0.0/12",
+      "10.0.0.0/8",
+      "192.168.0.0/16",
+      "100.64.0.0/10",
+      "host.containers.internal"
+    ],
+    "controlUi": {
+      "dangerouslyDisableDeviceAuth": false,
+      "allowInsecureAuth": false,
+      "allowedOrigins": [
+        "https://{{ groups['all'][0] }}:18789",
+        "https://{{ target_hostname }}:18789",
+        "https://localhost:18789",
+        "http://localhost:18789",
+        "http://127.0.0.1:18789",
+        "https://127.0.0.1:18789"
+      ]
+    },
+    "auth": {
+      "mode": "token",
+      "token": "{{ openclaw_token }}"
+    }
+  },
+  "discovery": {
+    "mdns": { "mode": "off" }
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "anthropic": {
+        "baseUrl": "http://litellm:4000",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "api": "anthropic-messages",
+        "models": [
+          {
+            "id": "claude-opus-4-6",
+            "name": "Claude Opus 4.6",
+            "reasoning": false,
+            "input": ["text", "image"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 200000,
+            "maxTokens": 4096
+          }
+        ]
+      }
+    }
+  },
+  "channels": {
+    "telegram": { "dmPolicy": "pairing" },
+    "whatsapp": { "dmPolicy": "pairing" },
+    "discord": { "dm": { "policy": "pairing" } },
+    "signal": { "dmPolicy": "pairing" }
+  },
+  "agents": {
+    "defaults": {
+      "heartbeat": { "every": "5m" }
+    },
+    "list": [
+      {
+        "id": "files",
+        "name": "FileSentry"
+      },
+      {
+        "id": "dev",
+        "name": "Coder"
+      }
+    ]
+  }
+}

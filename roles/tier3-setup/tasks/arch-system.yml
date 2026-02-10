@@ -1,0 +1,76 @@
+---
+# Arch System Setup
+
+- name: Update Pacman Cache and System
+  community.general.pacman:
+    update_cache: true
+    upgrade: true
+
+- name: Install pacman-contrib (Arch)
+  community.general.pacman:
+    name: pacman-contrib
+    state: present
+
+- name: Check if kernel reboot is required (checkreboot)
+  command: /usr/bin/checkreboot
+  register: checkreboot_result
+  changed_when: false
+  failed_when: false
+
+- name: Reboot if kernel was updated (checkreboot)
+  reboot:
+    msg: "Kernel updated. Rebooting now."
+  when: checkreboot_result.rc == 1
+
+- name: Install Essential Tools (Host)
+  community.general.pacman:
+    name:
+      - git
+      - vim
+      - ufw
+      - fail2ban
+      - openssh
+      - tailscale
+      - podman
+      - podman-compose
+      - sudo
+    state: present
+
+- name: Create OpenClaw User
+  user:
+    name: "{{ openclaw_user }}"
+    comment: "OpenClaw Service User"
+    shell: /bin/bash
+    create_home: true
+    home: "{{ openclaw_home }}"
+    state: present
+
+- name: Authorize New SSH Key for OpenClaw User
+  authorized_key:
+    user: "{{ openclaw_user }}"
+    state: present
+    key: "{{ deploy_public_key }}"
+
+- name: Setup OpenClaw .ssh Directory
+  file:
+    path: "{{ openclaw_home }}/.ssh"
+    state: directory
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0700'
+
+# Rootless Podman Setup
+- name: Enable Lingering for OpenClaw User
+  command: "loginctl enable-linger {{ openclaw_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ openclaw_user }}"
+
+- name: Start and Enable Tailscale
+  systemd:
+    name: tailscaled
+    state: started
+    enabled: true
+
+- name: Display Tailscale Instruction
+  debug:
+    msg: "Please run 'sudo tailscale up --ssh' manually to connect to your tailnet if not already connected."

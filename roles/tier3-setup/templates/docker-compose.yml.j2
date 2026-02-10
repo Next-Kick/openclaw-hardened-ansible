@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: openclaw-litellm
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - LITELLM_LOG=INFO
+    ports:
+      - "127.0.0.1:4000:4000"
+    networks:
+      - openclaw-internal
+      - openclaw-external
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    mem_limit: 512m
+    cpus: 1.0
+
+  squid:
+    image: docker.io/ubuntu/squid:latest
+    container_name: openclaw-squid
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3128:3128" # Expose locally for debugging if needed
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ./allowlist.txt:/etc/squid/allowlist.txt:ro
+    networks:
+      - openclaw-internal
+      - openclaw-external
+
+  openclaw:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: openclaw-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18789:18789"
+    networks:
+      - openclaw-internal
+    volumes:
+      - ./openclaw-data:/home/node/.openclaw
+      - ./openclaw-data/gateway.crt:/home/node/.openclaw/gateway.crt:ro
+      - ./openclaw-data/gateway.key:/home/node/.openclaw/gateway.key:ro
+      - ./openclaw-ssh:/home/node/.ssh
+      - ./workspace:/opt/openclaw/workspace
+    working_dir: /home/node
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - ANTHROPIC_API_BASE=http://litellm:4000
+      - ANTHROPIC_API_KEY=${LITELLM_MASTER_KEY}
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENCLAW_GATEWAY_CERT=/home/node/.openclaw/gateway.crt
+      - OPENCLAW_GATEWAY_KEY=/home/node/.openclaw/gateway.key
+      - HTTP_PROXY=http://squid:3128
+      - HTTPS_PROXY=http://squid:3128
+      - NO_PROXY=litellm,127.0.0.1,localhost,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
+    depends_on:
+      - litellm
+      - squid
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  openclaw-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+  
+  openclaw-external:
+    driver: bridge

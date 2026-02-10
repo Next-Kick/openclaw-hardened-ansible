@@ -1,0 +1,28 @@
+# Minimal Squid Config for OpenClaw Allowlisting
+http_port 3128
+
+# ACL Definitions
+acl localnet src 172.16.0.0/12  # Docker/Podman networks
+acl localnet src 10.0.0.0/8     # Local LAN
+acl localnet src 192.168.0.0/16 # Local LAN
+acl SSL_ports port 443
+acl Safe_ports port 80          # http
+acl Safe_ports port 21          # ftp
+acl Safe_ports port 443         # https
+acl Safe_ports port 1025-65535  # unregistered ports
+acl CONNECT method CONNECT
+
+# Access Control Lists
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+
+# Whitelist Configuration
+acl allowed_domains dstdomain "/etc/squid/allowlist.txt"
+
+# Rules
+http_access allow localhost
+http_access allow allowed_domains
+http_access deny all
+
+# Logging
+access_log stdio:/proc/self/fd/1 combined

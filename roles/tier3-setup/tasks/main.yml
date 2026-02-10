@@ -1,0 +1,25 @@
+---
+# Main Task File - Conditional Loading based on OS
+
+- name: Detect Operating System
+  debug:
+    msg: "Detected OS Family: {{ ansible_facts['os_family'] }}, Distribution: {{ ansible_facts['distribution'] }}"
+
+- name: Load Arch Linux Tasks
+  include_tasks: arch-system.yml
+  when: ansible_facts['os_family'] == 'Archlinux'
+
+- name: Load Debian/Ubuntu Tasks
+  include_tasks: debian-system.yml
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Fail on Unsupported OS
+  fail:
+    msg: "Unsupported OS: {{ ansible_facts['os_family'] }}. This playbook currently supports Arch Linux and Debian/Ubuntu."
+  when: ansible_facts['os_family'] not in ['Archlinux', 'Debian']
+
+- name: Configure System Security (Firewall/SSH)
+  include_tasks: security.yml
+
+- name: Setup Docker & Tier 3 Container Environment
+  include_tasks: docker-deploy.yml

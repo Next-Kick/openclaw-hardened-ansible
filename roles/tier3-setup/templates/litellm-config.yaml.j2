@@ -1,0 +1,40 @@
+model_list:
+  # Route the specific ID requested in the logs
+  - model_name: "claude-opus-4-6"
+    litellm_params:
+      model: "ollama/{{ llm_model }}"
+      api_base: "{{ llm_url }}"
+      api_key: "os.environ/TARGET_LLM_KEY"
+
+  - model_name: "claude-3-5-sonnet-20240620"
+    litellm_params:
+      model: "ollama/{{ llm_model }}"
+      api_base: "{{ llm_url }}"
+      api_key: "os.environ/TARGET_LLM_KEY"
+
+  - model_name: "claude-3-opus-20240229"
+    litellm_params:
+      model: "ollama/{{ llm_model }}"
+      api_base: "{{ llm_url }}"
+      api_key: "os.environ/TARGET_LLM_KEY"
+
+  # Catch-all
+  - model_name: "*"
+    litellm_params:
+      model: "ollama/{{ llm_model }}"
+      api_base: "{{ llm_url }}"
+      api_key: "os.environ/TARGET_LLM_KEY"
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  max_parallel_requests: 10
+  # Allow all routes to ensure no 404s on Anthropic-specific endpoints
+  allowed_routes:
+    - /v1/messages
+    - /v1/complete
+    - /v1/chat/completions
+
+litellm_settings:
+  request_timeout: 600
+  drop_params: true
+  num_retries: 2

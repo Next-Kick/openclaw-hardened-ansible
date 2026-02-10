@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "defaults": {
+    "security": "allowlist",
+    "ask": "on-miss",
+    "askFallback": "deny",
+    "autoAllowSkills": false
+  },
+  "agents": {
+    "dev": {
+      "security": "allowlist",
+      "ask": "off",
+      "allowlist": [
+        { "pattern": "/usr/bin/ls" },
+        { "pattern": "/bin/ls" },
+        { "pattern": "/usr/bin/cat" },
+        { "pattern": "/bin/cat" },
+        { "pattern": "/usr/bin/grep" },
+        { "pattern": "/bin/grep" },
+        { "pattern": "/usr/bin/head" },
+        { "pattern": "/usr/bin/tail" },
+        { "pattern": "/usr/bin/find" },
+        { "pattern": "/usr/bin/wc" },
+        { "pattern": "/usr/bin/sort" }
+      ]
+    },
+    "files": {
+      "security": "deny",
+      "ask": "always"
+    }
+  }
+}

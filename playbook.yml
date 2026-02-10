@@ -1,0 +1,176 @@
+---
+- name: Check for Existing Installation (Remote)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Check for existing agent identity
+      stat:
+        path: /etc/openclaw_identity
+      register: identity_file
+      ignore_errors: true
+
+    - name: Read existing identity
+      slurp:
+        src: /etc/openclaw_identity
+      register: identity_content
+      when: identity_file.stat.exists
+      ignore_errors: true
+
+    - name: Set existing_hostname fact
+      set_fact:
+        existing_hostname: "{{ identity_content['content'] | b64decode | trim }}"
+      when: identity_file.stat.exists and identity_content.content is defined
+
+- name: Local Setup (Key Generation & Naming)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    wordlist_path: "eff_large_wordlist.txt"
+    # Retrieve the fact from the previous play (from the first host in the group)
+    remote_existing_hostname: "{{ hostvars[groups['all'][0]]['existing_hostname'] | default('') }}"
+  
+  tasks:
+    - name: Ensure ssh-keys directory exists
+      file:
+        path: "ssh-keys"
+        state: directory
+        mode: '0700'
+
+    - block:
+        # PATH A: Use Existing Identity
+        - name: Use Existing Hostname
+          set_fact:
+            generated_hostname: "{{ remote_existing_hostname }}"
+          when: remote_existing_hostname | length > 0
+          
+        - name: Verify Local Key Exists for Existing Host
+          stat:
+            path: "ssh-keys/{{ generated_hostname }}.pem"
+          register: local_key_check
+          when: remote_existing_hostname | length > 0
+
+        - name: Warn if Key Missing
+          debug:
+            msg: "WARNING: Host has identity '{{ generated_hostname }}' but local key is missing! You might be locked out if you don't have the original key."
+          when: remote_existing_hostname | length > 0 and not local_key_check.stat.exists
+
+        # PATH B: Generate New Identity (Only if no existing hostname)
+        - name: Read EFF Wordlist
+          set_fact:
+            raw_wordlist: "{{ lookup('file', wordlist_path).splitlines() }}"
+          when: remote_existing_hostname | length == 0
+
+        - name: Clean Wordlist (Extract words)
+          set_fact:
+            clean_words: "{{ raw_wordlist | map('regex_replace', '^[0-9]+\\s+', '') | list }}"
+          when: remote_existing_hostname | length == 0
+
+        - name: Generate Random 3-Word Hostname
+          set_fact:
+            generated_hostname: "{{ clean_words | random }}-{{ clean_words | random }}-{{ clean_words | random }}"
+          run_once: true
+          when: remote_existing_hostname | length == 0
+
+        - name: Display Hostname
+          debug:
+            msg: "Target Identity: {{ generated_hostname }} ({{ 'EXISTING' if remote_existing_hostname else 'NEW' }})"
+
+        # Key Generation (Only if missing)
+        - name: Generate SSH Key Pair Locally
+          command: >
+            ssh-keygen -t ed25519 -f "ssh-keys/{{ generated_hostname }}.pem" -C "{{ generated_hostname }}-admin" -N ""
+          args:
+            creates: "ssh-keys/{{ generated_hostname }}.pem"
+        
+        - name: Generate Self-Signed SSL Certificate Locally
+          command: >
+            openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes
+            -keyout "ssh-keys/{{ generated_hostname }}.key"
+            -out "ssh-keys/{{ generated_hostname }}.crt"
+            -subj "/CN={{ generated_hostname }}"
+            -addext "subjectAltName=DNS:{{ generated_hostname }},DNS:localhost,IP:{{ groups['all'][0] }},IP:127.0.0.1"
+          args:
+            creates: "ssh-keys/{{ generated_hostname }}.crt"
+
+        - name: Read Public Key
+          slurp:
+            src: "ssh-keys/{{ generated_hostname }}.pem.pub"
+          register: public_key_content
+
+        - name: Read SSL Certificate Content
+          slurp:
+            src: "ssh-keys/{{ generated_hostname }}.crt"
+          register: ssl_cert_content
+
+        - name: Read SSL Key Content
+          slurp:
+            src: "ssh-keys/{{ generated_hostname }}.key"
+          register: ssl_key_content
+
+        - name: Set Facts for Deployment
+          set_fact:
+            openclaw_public_key: "{{ public_key_content['content'] | b64decode }}"
+            openclaw_ssl_cert: "{{ ssl_cert_content['content'] | b64decode }}"
+            openclaw_ssl_key: "{{ ssl_key_content['content'] | b64decode }}"
+
+      rescue:
+        - name: Cleanup Key Files on Failure
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "ssh-keys/{{ generated_hostname }}.pem"
+            - "ssh-keys/{{ generated_hostname }}.pem.pub"
+          when: generated_hostname is defined and remote_existing_hostname | length == 0
+
+        - name: Fail the Playbook
+          fail:
+            msg: "Setup failed. Cleaned up temporary key files."
+
+- name: OpenClaw Hardened Tier 3 Deployment (Remote)
+  hosts: all
+  become: true
+  vars:
+    # User Configuration
+    openclaw_user: "openclaw"
+    openclaw_home: "/home/openclaw"
+    
+    # Paths
+    docker_dir: "{{ openclaw_home }}/openclaw-docker"
+    data_dir: "{{ docker_dir }}/openclaw-data"
+    ssh_dir: "{{ docker_dir }}/openclaw-ssh"
+    workspace_dir: "{{ docker_dir }}/workspace"
+    
+    # Pass generated variables from first play
+    target_hostname: "{{ hostvars['localhost']['generated_hostname'] }}"
+    deploy_public_key: "{{ hostvars['localhost']['openclaw_public_key'] }}"
+
+    # LLM Configuration (Passed from deploy.sh)
+    llm_provider: "{{ llm_provider | default('ollama') }}"
+    llm_model: "{{ llm_model | default('llama3') }}"
+    llm_url: "{{ llm_url | default('http://10.0.110.1:11434') }}"
+    llm_key: "{{ llm_key | default('ollama') }}"
+
+  roles:
+    - tier3-setup
+
+  tasks:
+    - name: Persist Agent Identity
+      copy:
+        content: "{{ target_hostname }}"
+        dest: /etc/openclaw_identity
+        mode: '0644'
+
+  post_tasks:
+    - name: Final Success Message
+      debug:
+        msg: 
+          - "✅ Podman Deployment Complete!"
+          - "🔑 Private Key saved locally to: ssh-keys/{{ target_hostname }}.pem"
+          - "🖥️  New Hostname: {{ target_hostname }}"
+          - "🌐 Dashboard: https://{{ inventory_hostname }}:18789"
+          - "🌐 Connect using: ssh -i ssh-keys/{{ target_hostname }}.pem {{ openclaw_user }}@{{ inventory_hostname }}"
+          - "🤖 LLM Provider: {{ llm_provider }} | Model: {{ llm_model }}"
+          - "⚠️  Password authentication has been DISABLED."

@@ -1,0 +1,35 @@
+---
+- name: Update Squid Allowlist
+  hosts: all
+  become: true
+  vars:
+    openclaw_user: "openclaw"
+    docker_dir: "/home/openclaw/openclaw-docker"
+
+  tasks:
+    - name: Update Allowlist File
+      template:
+        src: roles/tier3-setup/templates/allowlist.txt.j2
+        dest: "{{ docker_dir }}/allowlist.txt"
+        owner: "{{ openclaw_user }}"
+        group: "{{ openclaw_user }}"
+        mode: '0644'
+      register: allowlist_update
+
+    - name: Get OpenClaw User UID
+      getent:
+        database: passwd
+        key: "{{ openclaw_user }}"
+      when: allowlist_update.changed
+
+    - name: Reload Squid Configuration
+      shell: |
+        podman exec openclaw-squid squid -k reconfigure
+      become_user: "{{ openclaw_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}"
+      when: allowlist_update.changed
+
+    - name: Status Message
+      debug:
+        msg: "{{ '✅ Allowlist updated and Squid reloaded.' if allowlist_update.changed else 'No changes to allowlist.' }}"

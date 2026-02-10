@@ -1,0 +1,296 @@
+---
+# Podman Tier 3 Deployment Setup
+
+- name: Get OpenClaw User UID
+  getent:
+    database: passwd
+    key: "{{ openclaw_user }}"
+
+- name: Create Podman Sandbox Directory Structure
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0700'
+  loop:
+    - "{{ docker_dir }}"
+    - "{{ data_dir }}"
+    - "{{ ssh_dir }}"
+    - "{{ workspace_dir }}"
+
+- name: Fix Workspace Permissions (Must be readable)
+  file:
+    path: "{{ workspace_dir }}"
+    mode: '0755'
+
+- name: Create LiteLLM Config
+  template:
+    src: litellm-config.yaml.j2
+    dest: "{{ docker_dir }}/litellm-config.yaml"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Check for existing secrets in .env
+  slurp:
+    src: "{{ docker_dir }}/.env"
+  register: existing_env_file
+  ignore_errors: true
+
+- name: Extract Existing Master Key
+  set_fact:
+    existing_master_key: "{{ (existing_env_file.content | b64decode | regex_findall('LITELLM_MASTER_KEY=(.*)'))[0] | default('') }}"
+  when: not existing_env_file.failed
+
+- name: Extract Existing Gateway Token
+  set_fact:
+    existing_openclaw_token: "{{ (existing_env_file.content | b64decode | regex_findall('OPENCLAW_GATEWAY_TOKEN=(.*)'))[0] | default('') }}"
+  when: not existing_env_file.failed
+
+- name: Generate LiteLLM Master Key (if missing)
+  command: "openssl rand -base64 32"
+  register: litellm_master_key_gen
+  when: existing_master_key | default('') | length == 0
+
+- name: Generate OpenClaw Gateway Token (if missing)
+  command: "openssl rand -base64 32"
+  register: openclaw_token_gen
+  when: existing_openclaw_token | default('') | length == 0
+
+- name: Set Final Secrets
+  set_fact:
+    litellm_key: "{{ existing_master_key if (existing_master_key | length > 0) else litellm_master_key_gen.stdout }}"
+    openclaw_token: "{{ existing_openclaw_token if (existing_openclaw_token | length > 0) else openclaw_token_gen.stdout }}"
+
+- name: Create .env file for Compose
+  template:
+    src: env.j2
+    dest: "{{ docker_dir }}/.env"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Prepare OpenClaw Config Directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0700'
+  loop:
+    - "{{ data_dir }}/credentials"
+
+- name: Create OpenClaw Consolidated Config
+  template:
+    src: openclaw.json.j2
+    dest: "{{ data_dir }}/openclaw.json"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Create Hardened Tools Allowlist
+  template:
+    src: tools.yaml.j2
+    dest: "{{ data_dir }}/tools.yaml"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+    
+- name: Create Secure MCP Config
+  template:
+    src: mcp.json.j2
+    dest: "{{ data_dir }}/mcp.json"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Create Exec Approvals Config
+  template:
+    src: exec-approvals.json.j2
+    dest: "{{ data_dir }}/exec-approvals.json"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Set Podman User Namespace Permissions (Apply to All Data)
+  command: "podman unshare chown -R 1000:1000 {{ item }}"
+  loop:
+    - "{{ data_dir }}"
+    - "{{ ssh_dir }}"
+    - "{{ workspace_dir }}"
+  become: true
+  become_user: "{{ openclaw_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}"
+
+- name: Fix Base Directory Permissions (Must be accessible by host user)
+  file:
+    path: "{{ docker_dir }}"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0700'
+
+- name: Deploy Monitoring Script
+  template:
+    src: monitor-openclaw.sh.j2
+    dest: "{{ docker_dir }}/monitor-openclaw.sh"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0700'
+
+- name: Create Monitoring systemd Service
+  copy:
+    dest: /etc/systemd/system/openclaw-monitor.service
+    content: |
+      [Unit]
+      Description=OpenClaw Security Monitor
+      After=podman.service
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ docker_dir }}/monitor-openclaw.sh
+      User=root
+
+- name: Create Monitoring systemd Timer
+  copy:
+    dest: /etc/systemd/system/openclaw-monitor.timer
+    content: |
+      [Unit]
+      Description=Run OpenClaw Security Monitor Weekly
+
+      [Timer]
+      OnCalendar=weekly
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+- name: Enable Monitoring Timer
+  systemd:
+    name: openclaw-monitor.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Deploy SSL Certificate
+  copy:
+    content: "{{ hostvars['localhost']['openclaw_ssl_cert'] }}"
+    dest: "{{ data_dir }}/gateway.crt"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0644'
+
+- name: Deploy SSL Key
+  copy:
+    content: "{{ hostvars['localhost']['openclaw_ssl_key'] }}"
+    dest: "{{ data_dir }}/gateway.key"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Create OpenClaw Dockerfile
+  template:
+    src: Dockerfile.j2
+    dest: "{{ docker_dir }}/Dockerfile"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0644'
+
+- name: Create Squid Allowlist
+  template:
+    src: allowlist.txt.j2
+    dest: "{{ docker_dir }}/allowlist.txt"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0644'
+
+- name: Create Squid Config
+  template:
+    src: squid.conf.j2
+    dest: "{{ docker_dir }}/squid.conf"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0644'
+
+- name: Deploy Podman Compose Stack
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ docker_dir }}/docker-compose.yml"
+    owner: "{{ openclaw_user }}"
+    group: "{{ openclaw_user }}"
+    mode: '0600'
+
+- name: Stop Existing Stack (Clean State)
+  shell: |
+    podman-compose down
+  args:
+    chdir: "{{ docker_dir }}"
+  become: true
+  become_user: "{{ openclaw_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}"
+  ignore_errors: true
+
+- name: Rebuild Podman Images
+  shell: |
+    podman-compose --verbose build
+  args:
+    chdir: "{{ docker_dir }}"
+  become: true
+  become_user: "{{ openclaw_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}"
+  register: podman_build_result
+
+- name: Show Podman Build Output
+  debug:
+    msg: 
+      - "STDOUT: {{ podman_build_result.stdout_lines }}"
+      - "STDERR: {{ podman_build_result.stderr_lines }}"
+
+- name: Start Podman Stack (Rootless)
+  shell: |
+    # We pass critical vars via CLI to ensure injection
+    podman-compose --verbose up -d
+    # Force restart agent to ensure config pick-up
+    podman restart openclaw-agent
+  args:
+    chdir: "{{ docker_dir }}"
+  become: true
+  become_user: "{{ openclaw_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}/bus"
+    # Inject variables here so podman-compose sees them for substitution
+    LITELLM_MASTER_KEY: "{{ litellm_key }}"
+    OPENCLAW_GATEWAY_TOKEN: "{{ openclaw_token }}"
+  register: podman_start_result
+
+- name: Show Podman Start Output
+  debug:
+    msg:
+      - "STDOUT: {{ podman_start_result.stdout_lines }}"
+      - "STDERR: {{ podman_start_result.stderr_lines }}"
+
+- name: Run OpenClaw Doctor Fix
+  shell: |
+    podman exec openclaw-agent openclaw doctor --fix --yes --non-interactive
+  become: true
+  become_user: "{{ openclaw_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][openclaw_user][1] }}"
+  ignore_errors: true
+
+- name: List All Podman Containers
+  command: podman ps -a
+  become: true
+  become_user: "{{ openclaw_user }}"
+  register: podman_ps_result
+
+- name: Show Container Status
+  debug:
+    var: podman_ps_result.stdout_lines
+  
+- name: Ensure Podman Containers persist on reboot
+  command: "loginctl enable-linger {{ openclaw_user }}"

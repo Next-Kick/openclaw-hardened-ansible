@@ -1,0 +1,34 @@
+# --- Ansible Secrets ---
+# Never commit your vault password files
+*.vault_pass.txt
+.vault_pass
+secrets.yml
+# If you use git-crypt
+.git-crypt/
+
+# Never commit your certificates or private keys.
+ssh-keys/
+
+# --- Dependencies ---
+# Ignore roles and collections downloaded from Galaxy
+# It's better to install these via requirements.yml on the target machine
+roles/external/
+roles/contrib/
+collections/
+
+# --- Temporary/Retry Files ---
+# Ansible creates these when a playbook fails
+*.retry
+
+# --- Local Configuration/IDEs ---
+.vscode/
+.ansible-lint
+.molecule/
+
+# --- Log Files ---
+*.log
+ansible.log
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db

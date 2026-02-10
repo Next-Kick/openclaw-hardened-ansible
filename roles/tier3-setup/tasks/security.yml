@@ -1,0 +1,49 @@
+---
+# Security Configuration (UFW, SSH, Fail2Ban)
+
+- name: Configure Fail2Ban for SSH
+  copy:
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [DEFAULT]
+      bantime = 3600
+      findtime = 600
+      maxretry = 5
+      backend = systemd
+
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+  notify: Restart Fail2Ban
+
+- name: UFW - Set Default Deny Incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: UFW - Set Default Allow Outgoing
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: UFW - Allow SSH (Port 22)
+  community.general.ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+    comment: 'SSH Access'
+
+- name: UFW - Allow Tailscale (UDP 41641)
+  community.general.ufw:
+    rule: allow
+    port: '41641'
+    proto: udp
+    comment: 'Tailscale UDP'
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
