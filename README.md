@@ -2,7 +2,7 @@
 
 **Automated Tier 3+ Security Hardening for OpenClaw AI Agents**
 
-This Ansible playbook implements and extends the security hardening measures described in the [OpenClaw Security Guide](../034-2026-02-05-Hardening%20OpenClaw.md), providing a fully automated deployment with additional defense-in-depth layers.
+This Ansible playbook implements and extends the security hardening measures described in the [OpenClaw Security Guide](https://nextkicklabs.substack.com/p/openclaw-hardened-deployment-security-with-ansible), providing a fully automated deployment with additional defense-in-depth layers.
 
 ## 🎯 What This Playbook Does
 
