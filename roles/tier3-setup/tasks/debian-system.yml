@@ -59,6 +59,14 @@
     creates: /etc/apt/sources.list.d/tailscale.list
   when: ansible_facts['distribution'] == 'Ubuntu'
   
+- name: Add Tailscale GPG Key (Debian)
+  shell: |
+    mkdir -p --mode=0755 /usr/share/keyrings
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/$(lsb_release -cs).noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  args:
+    creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
+  when: ansible_facts['distribution'] == 'Debian'
+
 - name: Add Tailscale Repository (Debian)
   shell: |
      curl -fsSL https://pkgs.tailscale.com/stable/debian/$(lsb_release -cs).tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
