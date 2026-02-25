@@ -60,8 +60,8 @@
 
 - name: Set Final Secrets
   set_fact:
-    litellm_key: "{{ existing_master_key if (existing_master_key | length > 0) else litellm_master_key_gen.stdout }}"
-    openclaw_token: "{{ existing_openclaw_token if (existing_openclaw_token | length > 0) else openclaw_token_gen.stdout }}"
+    litellm_key: "{{ existing_master_key if (existing_master_key | default('') | length > 0) else litellm_master_key_gen.stdout }}"
+    openclaw_token: "{{ existing_openclaw_token if (existing_openclaw_token | default('') | length > 0) else openclaw_token_gen.stdout }}"
 
 - name: Create .env file for Compose
   template:
